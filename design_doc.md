@@ -53,6 +53,17 @@ We propose a system where a VLM acts as an **experiment designer** — selecting
 
 **Implementation:** The VLM (e.g., GPT-4V, Gemini, or Claude with vision) receives a structured prompt containing the image, belief state summary, memory retrieval, and probe budget. It outputs a chain-of-thought reasoning trace and a structured action decision. When committing to throw, a small learned MLP maps the current belief state → throw parameters (the VLM selects *when* to throw, the MLP selects *how*).
 
+Critically, **the VLM's only output is a discrete action symbol** from `{P1, P2, P3, P4, P5, THROW}`. It never produces (μ, σ) values, throw parameters, or any continuous quantity directly. All numerical estimates flow through the downstream modules (belief update network + throw MLP), which play to each module's strengths: the VLM does semantic reasoning over *which experiment to run*, and small learned networks do precise numerical regression. This separation is motivated by VLMs' known weakness at precise quantitative prediction (see §12).
+
+**Throw MLP I/O (used when the VLM emits `THROW`):**
+
+| Stage | Input dim | Components | Output dim |
+|-------|-----------|------------|------------|
+| Phase 1 "oracle" MLP (ceiling baseline) | 6 | [m, c_d, Δ_com_x, Δ_com_z, I, distance] — ground-truth physics | 3 — (θ, v, Δt) |
+| Phase 3 "deployed" MLP (belief-conditioned) | 11 | [μ (5-dim), σ (5-dim), distance] — estimated physics + uncertainty | 3 — (θ, v, Δt) |
+
+The oracle MLP in Phase 1 is a *different model* from the deployed throw MLP in Phase 3. The Phase 1 model exists solely as (a) a sanity check that the simulator + throw parameterization is well-posed (if >90% success with perfect physics is unreachable, no probing strategy can save the system), and (b) the Oracle baseline in §8. The Phase 3 model has wider input, incorporates uncertainty (σ), and is trained on belief-state trajectories rather than ground-truth physics (see §10 Phase 3).
+
 **Actor B — Experiment Executor (MuJoCo Simulator)**
 
 Executes the chosen probe or throw action and returns structured numerical observations:
@@ -78,7 +89,48 @@ A Gaussian belief over 4 hidden properties:
 | Center-of-mass offset | Δ_com | Governs spin-induced drift | m (from geometric center) |
 | Moment of inertia | I | Governs rotational dynamics | kg·m² |
 
-**Update mechanism:** After each probe, a small learned update network (2-layer MLP) maps [current belief μ, σ, probe_type_onehot, observed_outcomes] → [updated μ, σ]. This is trained on the training object set. The VLM does *not* directly output numbers — it reasons about *which probe to run*, and the update network handles the quantitative Bayesian-like update.
+**Flattened physics vector.** CoM offset is 2D in the sagittal plane (x and z components), so the conceptually 4-property vector becomes a **5-dim scalar vector** when flattened for MLP I/O:
+
+```
+p = [m, c_d, Δ_com_x, Δ_com_z, I]
+```
+
+Three same-shape versions of this vector appear throughout the project:
+
+| Name | Meaning | Where it lives |
+|------|---------|----------------|
+| **p_true** | The physics MuJoCo actually simulates with | Simulator ground truth; available in training only |
+| **μ** | Bayesian point estimate of p | Output of the belief update network — the system's best guess given probe observations |
+| **σ** | Per-component uncertainty in the estimate | Also output of the belief update network — calibrated by training |
+
+At deployment the system never sees `p_true`; it only constructs `(μ, σ)` from probe observations and feeds those to the throw MLP. The core empirical question of the paper — *does probing help?* — reduces to: *how close does μ get to p_true, as a function of how smartly the VLM picks probes?*
+
+**Update mechanism (default: learned MLP).** After each probe, a small learned update network (2-layer MLP) maps
+
+```
+[μ_prior (5), σ_prior (5), probe_type_onehot (5), probe_observations (padded to max dim)]
+  → [μ_post (5), σ_post (5)]
+```
+
+Probe observations are different dimension per probe (e.g., P1 returns 3 numbers, P4 returns 2 + a bool). We pad to a fixed vector whose entries are zero for non-applicable probes; the probe-type one-hot lets the network gate on which entries are valid. Training loss is Gaussian NLL so that σ calibrates rather than collapsing to zero:
+
+```
+L = 0.5 * [log(σ_post²) + (μ_post - p_true)² / σ_post²]   (per component, then summed)
+```
+
+Training data (Phase 2): for every object in the 100-object catalog, run every probe in simulation; record `(probe_type, observations, p_true)`. Synthesize training examples by sampling random priors `(μ_prior, σ_prior)` that straddle `p_true`, passing them through the network, and supervising toward `p_true` with NLL. Success criterion: after 3 probes, belief RMSE < 20% of prior RMSE (§10 Phase 2).
+
+The VLM does *not* directly output (μ, σ) — it only picks the probe. The update network does the quantitative Bayesian-like inference.
+
+**Classical alternatives (recommended as baselines or fallback).** A learned update net is not the only reasonable choice here — and for this problem is arguably not even the *best* choice. Three classical alternatives work cleanly:
+
+1. **Per-probe analytical inversion.** Because each probe is deliberately designed to isolate one physics property, the forward model for several probes has a clean closed form. E.g., P1's hang time relates `c_d / m` directly; P4's angular deceleration gives `I` directly (no mass coupling). Combining P1 + P3 disambiguates `m` from `c_d`. No training required.
+2. **Extended / Unscented Kalman Filter.** Standard Bayesian nonlinear state estimation: write `observation = h(physics) + noise`, linearize around μ, apply Kalman gain. EKF produces calibrated σ by construction and handles cross-coupled observations naturally.
+3. **Particle filter / simulation-based inference.** Sample N physics vectors from the prior, replay the probe through MuJoCo for each, weight by observation likelihood, return the weighted mean/std as (μ, σ). Asymptotically exact; expensive (≈1000 sims per update) but no training.
+
+The arguments *for* a learned net are: implicit observation-noise model (no hand-tuned covariances), better handling of nonlinear coupling at wide priors, fast inference (one forward pass vs. many simulator calls), and uniform "learned pipeline" narrative. The arguments *against* are: training complexity, risk of miscalibrated σ, and more failure modes than a classical filter.
+
+**Our plan:** implement a learned update MLP as the primary method, but keep an EKF implementation as a drop-in baseline. If Phase 2 validation (belief RMSE reduction) fails or calibration is unreliable, we can swap to EKF without touching the rest of the pipeline. The paper's contribution is **VLM-driven probe selection**, not belief updating — making this component swappable keeps the contribution clean and the result less sensitive to implementation choices.
 
 ### 4.3 Information Flow
 
@@ -227,19 +279,83 @@ Prior object experiences are stored as structured records. At test time, retriev
 ### Phase 1: Simulator + Probe Primitives (Weeks 1–3)
 - [ ] MuJoCo 2D tossing environment with parameterized objects
 - [ ] 5 probe controllers with structured observation extraction
-- [ ] Object generation pipeline (mesh + physics parameter sampling)
+- [ ] Object generation pipeline (mesh + physics parameter sampling): 100 objects = 5 families × 20 samples (see §6.1)
 - [ ] Rendering pipeline for VLM input images
 - [ ] Sanity check: oracle throw MLP trained on ground-truth physics achieves >90% success
+
+**Phase 1 oracle MLP — detailed recipe.** This model is the ceiling baseline and the Phase 1 sanity check; it is *not* the deployed throw policy.
+
+- **Architecture:** 3-layer MLP, hidden dim 256, ReLU + BatchNorm, Sigmoid output head mapped to physical ranges.
+- **Input (6-dim):** `[m, c_d, Δ_com_x, Δ_com_z, I, basket_distance]` — normalized by per-feature mean/std from the training set.
+- **Output (3-dim):** `[θ, v, Δt]` in normalized [0,1], denormalized to physical ranges θ ∈ [20°, 80°], v ∈ [1, 8] m/s, Δt ∈ [−0.1, 0.1] s.
+- **Training data generation (oracle dataset):**
+    1. For each of the 100 catalog objects, and each of 20 basket distances spanning [1.0, 3.0] m,
+    2. Run CEM (cross-entropy method) in MuJoCo: sample ≈300 candidate `(θ, v, Δt)` triples, score each by negative distance-to-basket, refit a Gaussian to the top quantile, repeat for 5 iterations.
+    3. Record the CEM-winner throw and whether it landed in the basket.
+- **Dataset size:** ≈2000 rows of `(physics, distance) → optimal throw + binary success`.
+- **Training:** MSE regression in normalized output space.
+- **Success criterion:** ≥90% basket-landing rate on held-out object–distance pairs.
 
 ### Phase 2: Belief Update Network (Weeks 3–4)
 - [ ] Generate training data: run all probes on all training objects, record (probe_type, observation, true_physics) tuples
 - [ ] Train belief update MLP: given prior belief + probe observation → posterior belief
-- [ ] Validate: after 3 probes, belief RMSE should be <20% of prior RMSE
+- [ ] Implement EKF fallback as a drop-in baseline with the same I/O contract
+- [ ] Validate: after 3 probes, belief RMSE should be <20% of prior RMSE; σ calibration check (empirical coverage of ±σ bands ≈ 68%)
+
+**Detailed recipe — learned update network.**
+- **I/O (see §4.2):** `(μ_prior (5), σ_prior (5), probe_type_onehot (5), observations_padded) → (μ_post (5), σ_post (5))`.
+- **Observation padding:** per-probe observation vectors have different native dimensions (P1: 3 scalars; P2: 3; P3: 2; P4: 2 scalars + 1 bool → 3; P5: 3). Concatenate all probe observation slots into a single fixed-width vector with zeros in non-applicable slots; the network reads the probe-type one-hot to know which slots to trust.
+- **Training tuple synthesis:** for each (object, probe) pair in the raw data,
+    1. Sample a random prior `σ_prior ∈ [σ_min, σ_max]` per component (spanning what a loose visual prior would produce).
+    2. Sample `μ_prior ~ N(p_true, σ_prior²)` — a prior that straddles the truth.
+    3. Target is `p_true` itself; the network must learn both to *shift* μ toward truth and to *shrink* σ proportional to the information the probe provided.
+- **Loss:** Gaussian NLL per component, summed: `L = 0.5 * Σ_i [log(σ_post,i²) + (μ_post,i - p_true,i)² / σ_post,i²]`. MSE-only training collapses σ to zero; NLL is what makes σ calibrate.
+- **Architecture:** 2-layer MLP (per §4.2), hidden dim 128. σ output passes through softplus to stay positive.
+
+**Detailed recipe — EKF fallback.**
+- Implement each probe's forward model `h_p(physics)` as either closed-form (P1, P3, P4 are analytically tractable) or as a single MuJoCo rollout (P2, P5).
+- Linearize `h_p` by finite differences around μ_prior.
+- Apply Kalman gain with a hand-tuned observation covariance `R_p` per probe (estimated from simulator noise or set as a fraction of each observation's magnitude).
+- Same (μ, σ) I/O as the learned network so downstream components are unchanged.
 
 ### Phase 3: Throw Policy MLP (Weeks 4–5)
 - [ ] Train MLP: belief state + target location → throw parameters (θ, v, Δt)
-- [ ] Training data: sample physics params, compute optimal throw analytically or via CEM, train as regression
-- [ ] Validate: with ground-truth physics input, success rate >90%
+- [ ] Training data: generate `(μ, σ, distance) → optimal_throw` tuples via one of the three strategies below
+- [ ] Validate: with ground-truth physics input (degenerate σ→0), success rate >90% (matches Phase 1 oracle); with realistic post-probe (μ, σ), success rate on training objects is the primary Phase 3 metric
+
+**This is a new model, distinct from the Phase 1 oracle MLP.** Input dim grows from 6 → 11 because σ is now part of the input, and the training data distribution changes from "true physics" to "realistic belief states." The oracle MLP's weights are not reused. What persists is the **CEM → supervised regression recipe** for generating throw-parameter targets.
+
+**Why σ in the input matters.** A belief-conditioned throw MLP should throw **risk-aversely** when σ is large: prefer a `(θ, v)` whose success is robust across the uncertain physics range, even if it's suboptimal at μ. A narrow optimum that only works at exactly μ = 0.5 kg is worse than a wider throw that works across μ ∈ [0.3, 0.7] kg. This risk-awareness only emerges if σ appears in both input *and* training targets (Strategy C below).
+
+**Three data-generation strategies, in increasing fidelity and cost.**
+
+**Strategy A — Synthetic noise injection (cheapest).** Reuse the Phase 1 oracle dataset directly. For each `(p_true, distance, CEM_throw)` row:
+1. Sample σ from a reasonable range per component.
+2. Sample `μ = p_true + ε`, ε ~ N(0, σ²).
+3. Training row: `(μ, σ, distance) → CEM_throw`.
+
+Pro: trivial to implement, zero new simulator cost.
+Con: Gaussian isotropic noise doesn't match the structured, correlated errors the belief net actually produces at deployment (e.g., after P1 mass is accurate but drag is still fuzzy). Target is still the *single-physics* optimum — the MLP has no incentive to be risk-aware, since σ doesn't change the target.
+
+**Strategy B — Belief-net rollouts (faithful input distribution).** Only possible once Phase 2 is done.
+1. For each training object, run many probe sequences — varying probe choices, orders, and counts (k = 0, 1, 2, 3 probes).
+2. At each step, record the belief net's output `(μ, σ)`.
+3. Pair every rolled-out `(μ, σ, distance)` with the CEM-optimal throw for *that object* at *that distance* (from the oracle dataset).
+4. Training row: `(μ, σ, distance) → CEM_throw_for_p_true`.
+
+Pro: input distribution matches deployment exactly; MLP sees the specific correlated error patterns Phase 2's belief net actually produces.
+Con: coupled to Phase 2; if the belief net changes, the throw MLP must be retrained.
+
+**Strategy C — Robust-CEM targets (risk-aware by construction).** Make the target itself depend on σ.
+1. Sample `(μ, σ, distance)` either synthetically or from belief-net rollouts.
+2. Re-run CEM with objective `E_{p ~ N(μ, diag(σ²))}[success(throw, p)]` — for each candidate throw, simulate ~20 physics samples from the belief and score by the fraction landing in the basket.
+3. The CEM-winner is the **robust** throw for that belief.
+4. Training row: `(μ, σ, distance) → robust_throw`.
+
+Pro: σ in the input is now supervised by a σ-dependent target, so the MLP learns genuine risk-awareness (wider σ → wider/safer throws).
+Con: ≈20× more simulator calls per training row; must be built fresh (cannot reuse Phase 1 oracle dataset).
+
+**Recommended plan.** Start with Strategy A for a first working pipeline; swap to **B + C combined** (faithful inputs, robust targets) for the paper numbers. Report both to isolate how much of the Phase 3 gain comes from "belief-aware inputs" vs. "risk-aware targets."
 
 ### Phase 4: VLM Integration (Weeks 5–7)
 - [ ] Implement prompt template and memory retrieval (CLIP-based)
@@ -280,7 +396,13 @@ Free-form probe design requires solving the inverse problem of mapping natural l
 Reduces the physics parameter space (no lateral dynamics), the action space (3 params instead of 6+), and simulation cost. The conceptual contribution — active experiment design via VLM — is invariant to dimensionality.
 
 **Why a separate throw MLP instead of VLM-predicted throw params?**  
-VLMs are poor at precise numerical regression. The MLP converts a belief state (which the VLM helped construct through probe selection) into throw parameters. This plays to each module's strengths.
+VLMs are poor at precise numerical regression. The MLP converts a belief state (which the VLM helped construct through probe selection) into throw parameters. This plays to each module's strengths. Concretely, the VLM's output alphabet is only `{P1, P2, P3, P4, P5, THROW}` — six tokens — and all continuous values (μ, σ, θ, v, Δt) are produced by small MLPs downstream.
+
+**Why a learned belief update net instead of a classical Bayesian filter?**
+This is a deliberate — and debatable — choice. A classical filter (EKF, UKF, particle filter) or even per-probe analytical inversion would work for this problem: the physics is deterministic, the simulator is accessible, and each probe is designed to isolate a specific property. A learned update net is appealing mainly because (a) it implicitly learns the simulator's observation-noise model without hand-tuned covariances, (b) it naturally handles nonlinear cross-coupling in observations, and (c) it fits the "learned pipeline" narrative. But it adds training complexity and risks miscalibrated σ. Our plan (§4.2, §10 Phase 2) is to implement the learned net as the primary method but keep an EKF as a drop-in fallback — the paper's contribution is **probe selection**, not inference, so making the update component swappable keeps the result robust to this choice.
+
+**Why two different throw MLPs (Phase 1 oracle vs. Phase 3 deployed) instead of reusing one?**
+They answer different questions and have different input contracts. The Phase 1 oracle MLP takes `(p_true, distance)` with no uncertainty — it's the ceiling baseline and sanity check. The Phase 3 deployed MLP takes `(μ, σ, distance)` — it must be risk-aware when σ is wide. Training on true physics alone produces a model that is overconfident on noisy deployment inputs; training with σ-dependent targets (Strategy C in §10 Phase 3) is what teaches risk-aversion. These are incompatible objectives for a single model, so they live as two models.
 
 ## 13. Open Questions
 
