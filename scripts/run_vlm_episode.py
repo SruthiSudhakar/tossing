@@ -117,6 +117,13 @@ def main():
               f"|err|={abs(result.final_signed_error):.4f} m, {direction})")
     print(f"Distance to basket (2D miss): {result.distance_to_basket:.4f} m")
     print(f"Probes used: {result.n_probes_used} ({result.probe_sequence})")
+    for i, (pid, params) in enumerate(zip(result.probe_sequence, result.probe_params_used)):
+        if params:
+            pstr = " ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}"
+                            for k, v in sorted(params.items()))
+            print(f"  probe[{i}] {pid}({pstr})")
+        else:
+            print(f"  probe[{i}] {pid}()")
     if result.final_throw:
         t = result.final_throw
         print(f"Throw: theta={t.theta:.2f} v={t.v:.3f} dt={t.dt:.3f}")
@@ -148,6 +155,7 @@ def main():
                             if result.final_signed_error is not None else None),
         "n_probes_used": int(result.n_probes_used),
         "probe_sequence": result.probe_sequence,
+        "probe_params_used": result.probe_params_used,
         "probe_observations": result.probe_observations,
         "final_throw": (
             {"theta": result.final_throw.theta,

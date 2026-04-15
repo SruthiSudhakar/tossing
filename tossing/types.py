@@ -53,6 +53,7 @@ class ProbeResult:
     observations: dict[str, float]  # named numerical observations
     trajectory: np.ndarray | None = None  # (T, 6) pos+vel sampled at 30Hz, optional
     cost: int = 1
+    params: dict[str, float] = field(default_factory=dict)  # resolved probe params actually used
 
 
 @dataclass

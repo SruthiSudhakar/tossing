@@ -1,6 +1,6 @@
 """forward_toss: Short forward toss probe.
 
-Launch at 45 degrees at 3 m/s.
+Launch at `launch_angle` degrees at `launch_speed` m/s (defaults: 45, 3).
 Returns: landing_distance, flight_time, lateral_drift.
 Diagnostic purpose: drag (range shortfall), CoM offset (lateral drift).
 """
@@ -13,18 +13,23 @@ from tossing.probes import ProbeController, register_probe
 from tossing.types import ProbeResult
 
 
-LAUNCH_SPEED = 3.0  # m/s
-LAUNCH_ANGLE = 45.0  # degrees
-
-
 @register_probe("forward_toss")
 class ForwardTossProbe(ProbeController):
 
-    def execute(self, env) -> ProbeResult:
+    PARAM_SPEC = {
+        "launch_speed": (3.0, 0.5, 6.0),
+        "launch_angle": (45.0, 10.0, 80.0),
+    }
+
+    def execute(self, env, params: dict | None = None) -> ProbeResult:
+        p = self.resolve_params(params)
+        launch_speed = p["launch_speed"]
+        launch_angle = p["launch_angle"]
+
         release_pos = env.object_pos.copy()
-        theta = np.radians(LAUNCH_ANGLE)
-        vx = LAUNCH_SPEED * np.cos(theta)
-        vz = LAUNCH_SPEED * np.sin(theta)
+        theta = np.radians(launch_angle)
+        vx = launch_speed * np.cos(theta)
+        vz = launch_speed * np.sin(theta)
 
         env._release(linear_vel=np.array([vx, 0.0, vz]))
 
@@ -46,11 +51,9 @@ class ForwardTossProbe(ProbeController):
 
         landing_distance = final_pos[0] - release_pos[0]
         flight_time = t_end - t_start
-        # In 2D, "lateral drift" is deviation from the expected zero-drag landing point
-        # For a true 2D sim, y should be ~0, so we measure x-deviation from ballistic prediction
         from tossing.physics import ballistic_range
-        h = release_pos[2]  # launch height above ground
-        expected_range = ballistic_range(LAUNCH_SPEED, LAUNCH_ANGLE, h)
+        h = release_pos[2]
+        expected_range = ballistic_range(launch_speed, launch_angle, h)
         lateral_drift = landing_distance - expected_range
 
         observations = {
@@ -66,4 +69,5 @@ class ForwardTossProbe(ProbeController):
             observations=observations,
             trajectory=traj_array,
             cost=1,
+            params=p,
         )

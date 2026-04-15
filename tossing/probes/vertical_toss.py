@@ -1,6 +1,6 @@
 """vertical_toss: Vertical micro-toss probe.
 
-Launch object straight up at 2 m/s.
+Launch object straight up at `launch_speed` (default 2 m/s).
 Returns: apex_height, hang_time, landing_offset.
 Diagnostic purpose: mass (hang time), drag (apex delta from ballistic prediction).
 """
@@ -13,39 +13,40 @@ from tossing.probes import ProbeController, register_probe
 from tossing.types import ProbeResult
 
 
-LAUNCH_SPEED = 2.0  # m/s upward
-
-
 @register_probe("vertical_toss")
 class VerticalTossProbe(ProbeController):
 
-    def execute(self, env) -> ProbeResult:
+    PARAM_SPEC = {
+        # name: (default, lo, hi)
+        "launch_speed": (2.0, 0.5, 5.0),
+    }
+
+    def execute(self, env, params: dict | None = None) -> ProbeResult:
+        p = self.resolve_params(params)
+        launch_speed = p["launch_speed"]
+
         release_pos = env.object_pos.copy()
         release_z = release_pos[2]
         release_x = release_pos[0]
 
-        # Release straight up
-        env._release(linear_vel=np.array([0.0, 0.0, LAUNCH_SPEED]))
+        env._release(linear_vel=np.array([0.0, 0.0, launch_speed]))
 
-        # Track trajectory until object returns below release height or hits ground
         max_z = release_z
         trajectory = []
         steps_per_frame = max(1, int(1.0 / (30 * env.timestep)))
         t_start = env.sim_time
 
-        for i in range(10000):  # max ~20s
+        for i in range(10000):
             env._step()
             pos = env.object_pos
             z = pos[2]
 
             if i % steps_per_frame == 0:
-                state = env._get_object_state()
-                trajectory.append(state)
+                trajectory.append(env._get_object_state())
 
             if z > max_z:
                 max_z = z
 
-            # Stop when object returns to release height (descending) or hits ground
             vel_z = env._get_object_vel()[2]
             if z <= release_z and vel_z < 0 and i > 10:
                 break
@@ -72,4 +73,5 @@ class VerticalTossProbe(ProbeController):
             observations=observations,
             trajectory=traj_array,
             cost=1,
+            params=p,
         )

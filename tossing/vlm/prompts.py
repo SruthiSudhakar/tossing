@@ -11,21 +11,34 @@ Your job is to land a novel object in a basket at a known distance. You do not k
 the object's hidden physics (mass, drag, center-of-mass offset, moment of inertia).
 You may run up to a small number of diagnostic probes before committing to a throw.
 
+Each probe has tunable parameters — you choose the values. Repeating a probe with
+the SAME parameters gives you the same observations, so only re-run a probe if you
+change at least one parameter to gain new information.
+
 PROBE MENU (each costs nothing and returns structured numerical observations):
-  vertical_toss = Launch straight up at 2 m/s.
+  vertical_toss = Launch straight up at a chosen speed.
+       Params: launch_speed in [0.5, 5.0] m/s (default 2.0).
        Observations: apex_height (m), hang_time (s), landing_offset (m).
        Diagnostic: mass (hang time), drag (apex shortfall vs ballistic).
-  forward_toss = Launch at 45 degrees, 3 m/s.
+  forward_toss = Launch at a chosen angle and speed.
+       Params: launch_speed in [0.5, 6.0] m/s (default 3.0),
+               launch_angle in [10, 80] deg (default 45.0).
        Observations: landing_distance (m), flight_time (s), lateral_drift (m).
        Diagnostic: drag (range shortfall), CoM offset (lateral drift).
-  release_drop = Open gripper, let fall from 1.5 m.
+  release_drop = Open gripper, let fall from ~1.5 m.
+       Params: observe_time in [0.1, 3.0] s after first contact (default 0.5).
        Observations: fall_time (s), coefficient_of_restitution, bounce_count.
        Diagnostic: mass vs drag (fall time), restitution.
-  wrist_flick = Apply a known torque impulse.
+  wrist_flick = Apply a torque impulse of chosen magnitude and duration.
+       Params: torque in [0.1, 5.0] N*m (default 1.0),
+               impulse_duration in [0.01, 0.2] s (default 0.05).
        Observations: angular_velocity_response (rad/s), angular_deceleration (rad/s^2),
                      precession_detected (0 or 1), translational_drift (m).
        Diagnostic: moment of inertia (angular response ~ 1/I), CoM offset (precession, drift).
-  shake = Oscillate gripper +/- 5 cm at 4 Hz.
+  shake = Oscillate gripper vertically.
+       Params: frequency in [0.5, 20.0] Hz (default 4.0),
+               amplitude in [0.01, 0.15] m (default 0.05),
+               duration in [0.3, 2.0] s (default 1.0).
        Observations: peak_force (N), damping_ratio, perceived_resistance.
        Diagnostic: mass, internal inertia distribution.
   THROW = Commit to a final throw.
@@ -36,11 +49,15 @@ THROW PARAMETERS (when committing):
   dt:    release timing offset in seconds, in [-0.1, 0.1]
 
 Each turn you will see the object (side + top view), the target basket distance,
-observations from every probe you have already run, and the probes remaining.
+observations from every probe you have already run (with the parameters used),
+and the probes remaining.
 
 Reason step by step. At the END of your response, emit exactly one structured block.
-If probing: one line with just the probe name.
+If probing: one line with the probe name and optional key=value params. Unspecified
+params use their defaults. Examples:
   ACTION: vertical_toss
+  ACTION: vertical_toss launch_speed=3.5
+  ACTION: forward_toss launch_speed=4.0 launch_angle=60
 If throwing: four lines with the action and numeric parameters.
   ACTION: THROW
   THETA: 45.0
@@ -50,6 +67,20 @@ If throwing: four lines with the action and numeric parameters.
 Only the final structured block is parsed; reason freely before it but keep the
 tail of your response clean.
 """
+
+
+def _format_params(params: dict[str, float] | None) -> str:
+    """Render probe params dict as `k=v` (sorted)."""
+    if not params:
+        return ""
+    parts = []
+    for k in sorted(params):
+        v = params[k]
+        if isinstance(v, float):
+            parts.append(f"{k}={v:.3f}")
+        else:
+            parts.append(f"{k}={v}")
+    return " ".join(parts)
 
 
 def format_observations(result: ProbeResult) -> str:
@@ -88,7 +119,9 @@ def build_user_message(
     if history:
         lines.append(f"PROBES COMPLETED THIS EPISODE ({len(history)}):")
         for probe_id, result in history:
-            lines.append(f"  {probe_id}: {format_observations(result)}")
+            params_str = _format_params(getattr(result, "params", None))
+            header = f"{probe_id}({params_str})" if params_str else probe_id
+            lines.append(f"  {header}: {format_observations(result)}")
     else:
         lines.append("PROBES COMPLETED THIS EPISODE: none.")
     lines.append("")
@@ -108,9 +141,11 @@ def build_user_message(
         )
     else:
         lines.append(
-            "Decide: run one more probe, or commit to a throw. Think about which "
-            "hidden physics parameters are still most uncertain and whether another "
-            "probe would meaningfully reduce that uncertainty given the budget."
+            "Decide: run one more probe (optionally with custom parameters), or "
+            "commit to a throw. Think about which hidden physics parameters are "
+            "still most uncertain and whether another probe — possibly with "
+            "different parameters than any you've already tried — would "
+            "meaningfully reduce that uncertainty given the budget."
         )
 
     return "\n".join(lines)

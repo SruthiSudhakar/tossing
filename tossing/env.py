@@ -407,14 +407,16 @@ class TossEnv:
     # Public API
     # ------------------------------------------------------------------
 
-    def run_probe(self, probe_type: str) -> ProbeResult:
+    def run_probe(self, probe_type: str, params: dict | None = None) -> ProbeResult:
         """Execute a probe action and return structured observations.
 
-        Dispatches to the appropriate probe controller.
+        Dispatches to the appropriate probe controller. `params` is a dict of
+        tunable knobs for that probe (see each probe's PARAM_SPEC); unspecified
+        keys fall back to defaults.
         """
         from tossing.probes import get_probe
         controller = get_probe(probe_type)
-        result = controller.execute(self)
+        result = controller.execute(self, params=params)
         # Reset object back to gripper for next action
         self._soft_reset()
         return result

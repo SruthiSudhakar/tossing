@@ -51,6 +51,7 @@ def _serialize_episode(obj, distance, budget, seed, result) -> dict:
         "distance_to_basket": float(result.distance_to_basket),
         "n_probes_used": int(result.n_probes_used),
         "probe_sequence": result.probe_sequence,
+        "probe_params_used": result.probe_params_used,
         "probe_observations": result.probe_observations,
         "final_throw": (
             {"theta": result.final_throw.theta,

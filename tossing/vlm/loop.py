@@ -24,6 +24,7 @@ class EpisodeResult:
     n_probes_used: int
     probe_sequence: list[str] = field(default_factory=list)
     probe_observations: list[dict] = field(default_factory=list)
+    probe_params_used: list[dict] = field(default_factory=list)  # parallel to probe_sequence
     final_throw: ThrowParams | None = None
     reasoning_traces: list[str] = field(default_factory=list)
     parse_errors: int = 0
@@ -68,6 +69,7 @@ def run_episode(
     reasoning_traces: list[str] = []
     probe_sequence: list[str] = []
     probe_observations: list[dict] = []
+    probe_params_used: list[dict] = []
     parse_errors = 0
     videos: list[str] = []
 
@@ -115,6 +117,7 @@ def run_episode(
                     n_probes_used=len(history),
                     probe_sequence=probe_sequence,
                     probe_observations=probe_observations,
+                    probe_params_used=probe_params_used,
                     final_throw=None,
                     reasoning_traces=reasoning_traces,
                     parse_errors=parse_errors,
@@ -129,9 +132,19 @@ def run_episode(
                 force_throw = True
                 continue
             probe_id = action.probe_id
+            probe_params = action.probe_params or None
             if video_dir is not None:
                 env.start_recording(fps=video_fps)
-            result = env.run_probe(probe_id)
+            try:
+                result = env.run_probe(probe_id, params=probe_params)
+            except ValueError as e:
+                # Unknown probe param — treat like a parse error and retry once.
+                parse_errors += 1
+                if video_dir is not None:
+                    env.stop_recording()  # discard frames
+                reasoning_traces.append(f"[invalid probe params: {e}]")
+                force_throw = False  # allow another probe attempt
+                continue
             if video_dir is not None:
                 path = video_dir / f"{turn + 1:02d}_{probe_id}.mp4"
                 if env.save_recording(path, fps=video_fps) > 0:
@@ -139,6 +152,7 @@ def run_episode(
             history.append((probe_id, result))
             probe_sequence.append(probe_id)
             probe_observations.append(dict(result.observations))
+            probe_params_used.append(dict(result.params))
             # After this probe, if we're now out of budget, force a throw.
             if len(history) >= max_probes:
                 force_throw = True
@@ -164,6 +178,7 @@ def run_episode(
             n_probes_used=len(history),
             probe_sequence=probe_sequence,
             probe_observations=probe_observations,
+            probe_params_used=probe_params_used,
             final_throw=throw,
             reasoning_traces=reasoning_traces,
             parse_errors=parse_errors,
@@ -181,6 +196,7 @@ def run_episode(
         n_probes_used=len(history),
         probe_sequence=probe_sequence,
         probe_observations=probe_observations,
+        probe_params_used=probe_params_used,
         final_throw=None,
         reasoning_traces=reasoning_traces,
         parse_errors=parse_errors,

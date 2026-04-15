@@ -13,17 +13,20 @@ from tossing.probes import ProbeController, register_probe
 from tossing.types import ProbeResult
 
 
-EXTRA_OBSERVE_TIME = 0.5  # seconds after first ground contact to watch bounces
-
-
 @register_probe("release_drop")
 class ReleaseDropProbe(ProbeController):
 
-    def execute(self, env) -> ProbeResult:
+    PARAM_SPEC = {
+        "observe_time": (0.5, 0.1, 3.0),  # seconds after first contact to watch bounces
+    }
+
+    def execute(self, env, params: dict | None = None) -> ProbeResult:
+        p = self.resolve_params(params)
+        extra_observe_time = p["observe_time"]
+
         release_pos = env.object_pos.copy()
         drop_height = release_pos[2]
 
-        # Release with zero velocity
         env._release(linear_vel=np.array([0.0, 0.0, 0.0]))
 
         t_start = env.sim_time
@@ -44,33 +47,27 @@ class ReleaseDropProbe(ProbeController):
             if i % steps_per_frame == 0:
                 trajectory.append(env._get_object_state())
 
-            # Detect first ground contact
             if first_contact_time is None and env._object_on_ground():
                 first_contact_time = env.sim_time
 
-            # Track bounces after first contact
             if first_contact_time is not None:
                 if z > prev_z and not going_up:
-                    # Started going up — beginning of a bounce
                     going_up = True
                     local_max_z = z
                 elif going_up and z > local_max_z:
                     local_max_z = z
                 elif going_up and z < prev_z:
-                    # Reached peak of bounce
-                    if local_max_z > 0.02:  # minimum bounce height threshold
+                    if local_max_z > 0.02:
                         bounce_heights.append(local_max_z)
                     going_up = False
 
-                # Stop after extra observation time
-                if env.sim_time - first_contact_time > EXTRA_OBSERVE_TIME:
+                if env.sim_time - first_contact_time > extra_observe_time:
                     break
 
             prev_z = z
 
         fall_time = (first_contact_time - t_start) if first_contact_time else (env.sim_time - t_start)
 
-        # Coefficient of restitution: sqrt(bounce_height / drop_height)
         if bounce_heights:
             cor = float(np.sqrt(bounce_heights[0] / drop_height))
         else:
@@ -89,4 +86,5 @@ class ReleaseDropProbe(ProbeController):
             observations=observations,
             trajectory=traj_array,
             cost=1,
+            params=p,
         )
