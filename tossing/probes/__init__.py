@@ -4,7 +4,7 @@ from tossing.types import ProbeResult
 class ProbeController(ABC):
     """Base class for all probe action primitives."""
 
-    probe_type: str  # "P1".."P5"
+    probe_type: str  # "vertical_toss" | "forward_toss" | "release_drop" | "wrist_flick" | "shake"
     cost: int = 1
 
     @abstractmethod

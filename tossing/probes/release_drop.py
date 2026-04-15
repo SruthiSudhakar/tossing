@@ -1,4 +1,4 @@
-"""P3: Gentle release-drop probe.
+"""release_drop: Gentle release-drop probe.
 
 Open gripper, let object fall from rest.
 Returns: fall_time, coefficient_of_restitution, bounce_count.
@@ -16,7 +16,7 @@ from tossing.types import ProbeResult
 EXTRA_OBSERVE_TIME = 0.5  # seconds after first ground contact to watch bounces
 
 
-@register_probe("P3")
+@register_probe("release_drop")
 class ReleaseDropProbe(ProbeController):
 
     def execute(self, env) -> ProbeResult:
@@ -85,7 +85,7 @@ class ReleaseDropProbe(ProbeController):
         traj_array = np.array(trajectory) if trajectory else np.zeros((0, 6))
 
         return ProbeResult(
-            probe_type="P3",
+            probe_type="release_drop",
             observations=observations,
             trajectory=traj_array,
             cost=1,

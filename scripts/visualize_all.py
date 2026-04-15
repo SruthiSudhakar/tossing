@@ -134,18 +134,24 @@ def viz_probe_trajectories():
     )
 
     probe_names = {
-        "P1": "Vertical Micro-Toss",
-        "P2": "Short Forward Toss",
-        "P3": "Gentle Release-Drop",
-        "P4": "Wrist Flick",
-        "P5": "Small Shake",
+        "vertical_toss": "Vertical Micro-Toss",
+        "forward_toss": "Short Forward Toss",
+        "release_drop": "Gentle Release-Drop",
+        "wrist_flick": "Wrist Flick",
+        "shake": "Small Shake",
     }
-    colors = {"P1": "#e74c3c", "P2": "#3498db", "P3": "#2ecc71", "P4": "#9b59b6", "P5": "#f39c12"}
+    colors = {
+        "vertical_toss": "#e74c3c",
+        "forward_toss": "#3498db",
+        "release_drop": "#2ecc71",
+        "wrist_flick": "#9b59b6",
+        "shake": "#f39c12",
+    }
 
     fig, axes = plt.subplots(1, 5, figsize=(22, 4.5))
     fig.suptitle(f"Probe Trajectories — {obj.name} (m={obj.mass}kg, cd={obj.drag_coeff})", fontsize=14)
 
-    for idx, pt in enumerate(["P1", "P2", "P3", "P4", "P5"]):
+    for idx, pt in enumerate(["vertical_toss", "forward_toss", "release_drop", "wrist_flick", "shake"]):
         ax = axes[idx]
         env = TossEnv(obj, basket_distance=2.0)
         result = env.run_probe(pt)
@@ -181,85 +187,85 @@ def viz_probe_sensitivity():
     fig, axes = plt.subplots(2, 3, figsize=(16, 10))
     fig.suptitle("Probe Sensitivity Across Object Families", fontsize=14)
 
-    # P1 apex by family
+    # vertical_toss apex by family
     ax = axes[0, 0]
     for fam in families:
         objs = [o for o in catalog if o.family == fam][:5]
         apexes = []
         for obj in objs:
             env = TossEnv(obj, basket_distance=2.0)
-            r = env.run_probe("P1")
+            r = env.run_probe("vertical_toss")
             apexes.append(r.observations["apex_height"])
         ax.bar(families.index(fam), np.mean(apexes), yerr=np.std(apexes) if len(apexes) > 1 else 0,
                capsize=4, color=f"C{families.index(fam)}", alpha=0.8)
     ax.set_xticks(range(len(families)))
     ax.set_xticklabels([f.replace("_", "\n") for f in families], fontsize=7)
     ax.set_ylabel("Apex height (m)")
-    ax.set_title("P1: Vertical Toss — Apex")
+    ax.set_title("vertical_toss — Apex")
 
-    # P2 landing distance by family
+    # forward_toss landing distance by family
     ax = axes[0, 1]
     for fam in families:
         objs = [o for o in catalog if o.family == fam][:5]
         dists = []
         for obj in objs:
             env = TossEnv(obj, basket_distance=2.0)
-            r = env.run_probe("P2")
+            r = env.run_probe("forward_toss")
             dists.append(r.observations["landing_distance"])
         ax.bar(families.index(fam), np.mean(dists), yerr=np.std(dists) if len(dists) > 1 else 0,
                capsize=4, color=f"C{families.index(fam)}", alpha=0.8)
     ax.set_xticks(range(len(families)))
     ax.set_xticklabels([f.replace("_", "\n") for f in families], fontsize=7)
     ax.set_ylabel("Landing distance (m)")
-    ax.set_title("P2: Forward Toss — Range")
+    ax.set_title("forward_toss — Range")
 
-    # P3 fall time by family
+    # release_drop fall time by family
     ax = axes[0, 2]
     for fam in families:
         objs = [o for o in catalog if o.family == fam][:5]
         times = []
         for obj in objs:
             env = TossEnv(obj, basket_distance=2.0)
-            r = env.run_probe("P3")
+            r = env.run_probe("release_drop")
             times.append(r.observations["fall_time"])
         ax.bar(families.index(fam), np.mean(times), yerr=np.std(times) if len(times) > 1 else 0,
                capsize=4, color=f"C{families.index(fam)}", alpha=0.8)
     ax.set_xticks(range(len(families)))
     ax.set_xticklabels([f.replace("_", "\n") for f in families], fontsize=7)
     ax.set_ylabel("Fall time (s)")
-    ax.set_title("P3: Drop — Fall Time")
+    ax.set_title("release_drop — Fall Time")
 
-    # P4 angular velocity by family
+    # wrist_flick angular velocity by family
     ax = axes[1, 0]
     for fam in families:
         objs = [o for o in catalog if o.family == fam][:5]
         omegas = []
         for obj in objs:
             env = TossEnv(obj, basket_distance=2.0)
-            r = env.run_probe("P4")
+            r = env.run_probe("wrist_flick")
             omegas.append(r.observations["angular_velocity_response"])
         ax.bar(families.index(fam), np.mean(omegas), yerr=np.std(omegas) if len(omegas) > 1 else 0,
                capsize=4, color=f"C{families.index(fam)}", alpha=0.8)
     ax.set_xticks(range(len(families)))
     ax.set_xticklabels([f.replace("_", "\n") for f in families], fontsize=7)
     ax.set_ylabel("Angular vel response (rad/s)")
-    ax.set_title("P4: Wrist Flick — Angular Response")
+    ax.set_title("wrist_flick — Angular Response")
 
-    # P5 perceived resistance by family
+    # shake perceived resistance by family
     ax = axes[1, 1]
     for fam in families:
         objs = [o for o in catalog if o.family == fam][:5]
         resists = []
         for obj in objs:
             env = TossEnv(obj, basket_distance=2.0)
-            r = env.run_probe("P5")
+            r = env.run_probe("shake")
             resists.append(r.observations["perceived_resistance"])
         ax.bar(families.index(fam), np.mean(resists), yerr=np.std(resists) if len(resists) > 1 else 0,
                capsize=4, color=f"C{families.index(fam)}", alpha=0.8)
     ax.set_xticks(range(len(families)))
     ax.set_xticklabels([f.replace("_", "\n") for f in families], fontsize=7)
     ax.set_ylabel("Perceived resistance")
-    ax.set_title("P5: Shake — Resistance")
+    ax.set_title("shake — Resistance")
 
     # Hide last subplot
     axes[1, 2].axis("off")

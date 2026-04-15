@@ -49,7 +49,7 @@ class ObjectSpec:
 class ProbeResult:
     """Structured observations returned by a probe action."""
 
-    probe_type: str  # "P1".."P5"
+    probe_type: str  # "vertical_toss" | "forward_toss" | "release_drop" | "wrist_flick" | "shake"
     observations: dict[str, float]  # named numerical observations
     trajectory: np.ndarray | None = None  # (T, 6) pos+vel sampled at 30Hz, optional
     cost: int = 1

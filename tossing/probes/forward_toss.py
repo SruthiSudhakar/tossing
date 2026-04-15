@@ -1,4 +1,4 @@
-"""P2: Short forward toss probe.
+"""forward_toss: Short forward toss probe.
 
 Launch at 45 degrees at 3 m/s.
 Returns: landing_distance, flight_time, lateral_drift.
@@ -17,7 +17,7 @@ LAUNCH_SPEED = 3.0  # m/s
 LAUNCH_ANGLE = 45.0  # degrees
 
 
-@register_probe("P2")
+@register_probe("forward_toss")
 class ForwardTossProbe(ProbeController):
 
     def execute(self, env) -> ProbeResult:
@@ -62,7 +62,7 @@ class ForwardTossProbe(ProbeController):
         traj_array = np.array(trajectory) if trajectory else np.zeros((0, 6))
 
         return ProbeResult(
-            probe_type="P2",
+            probe_type="forward_toss",
             observations=observations,
             trajectory=traj_array,
             cost=1,

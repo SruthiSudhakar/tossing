@@ -166,7 +166,7 @@ class TossEnv:
 
     Usage:
         env = TossEnv(object_spec, basket_distance=2.0)
-        result = env.run_probe("P1")      # run a diagnostic probe
+        result = env.run_probe("vertical_toss")  # run a diagnostic probe
         result = env.throw(ThrowParams(theta=45, v=5.0))  # attempt a throw
         images = env.render()             # get side+top view images
         env.reset(new_spec, new_distance) # swap object
@@ -204,6 +204,12 @@ class TossEnv:
 
         # Renderer (lazy init)
         self._renderer = None
+
+        # Video recording state (opt-in via start_recording).
+        self._recording = False
+        self._record_frames: list[np.ndarray] = []
+        self._record_step_counter = 0
+        self._record_steps_per_capture = 1
 
         # Initialize grasped state
         self._grasped = True
@@ -290,6 +296,11 @@ class TossEnv:
             # Also zero y position drift
             qa = self.obj_qpos_adr
             self.data.qpos[qa + 1] = 0  # y = 0
+
+        if self._recording:
+            if self._record_step_counter % self._record_steps_per_capture == 0:
+                self._record_frames.append(self.render_pair_array())
+            self._record_step_counter += 1
 
     def _step_n(self, n: int):
         """Advance simulation by n timesteps."""
@@ -485,11 +496,54 @@ class TossEnv:
 
         return {"side": side_img, "top": top_img}
 
+    def render_pair_array(self, width: int = 640, height: int = 480) -> np.ndarray:
+        """Side+top stacked as a single uint8 (H, 2W, 3) array."""
+        views = self.render(width, height)
+        return np.concatenate([views["side"], views["top"]], axis=1)
+
     def render_pair(self, width: int = 640, height: int = 480) -> Image.Image:
         """Render side-by-side image for VLM input."""
-        views = self.render(width, height)
-        combined = np.concatenate([views["side"], views["top"]], axis=1)
-        return Image.fromarray(combined)
+        return Image.fromarray(self.render_pair_array(width, height))
+
+    # ------------------------------------------------------------------
+    # Video recording
+    # ------------------------------------------------------------------
+
+    def start_recording(self, fps: int = 30):
+        """Begin capturing side+top frames inside _step().
+
+        Frames are sampled at ~fps by decimating against the sim timestep.
+        Any previously buffered frames are discarded.
+        """
+        self._record_frames = []
+        self._record_step_counter = 0
+        self._record_steps_per_capture = max(1, int(round(1.0 / (fps * self.timestep))))
+        self._recording = True
+
+    def stop_recording(self) -> list[np.ndarray]:
+        """Stop capturing and return the buffered frames; clears the buffer."""
+        self._recording = False
+        frames = self._record_frames
+        self._record_frames = []
+        self._record_step_counter = 0
+        return frames
+
+    def save_recording(self, path, fps: int = 30) -> int:
+        """Stop recording and write buffered frames to an MP4. Returns frame count.
+
+        No-op if no frames were captured.
+        """
+        import imageio.v2 as imageio
+        from pathlib import Path
+
+        frames = self.stop_recording()
+        if not frames:
+            return 0
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        imageio.mimwrite(str(path), frames, fps=fps, codec="libx264",
+                         macro_block_size=1)
+        return len(frames)
 
     @property
     def object_pos(self) -> np.ndarray:

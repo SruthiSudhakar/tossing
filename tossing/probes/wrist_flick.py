@@ -1,4 +1,4 @@
-"""P4: Wrist flick probe.
+"""wrist_flick: Wrist flick probe.
 
 Apply a known torque impulse and measure angular velocity response.
 Returns: angular_velocity_response, angular_deceleration, precession_detected.
@@ -19,7 +19,7 @@ IMPULSE_DURATION = 0.05  # seconds (25 timesteps at dt=0.002)
 OBSERVE_TIME = 0.5  # seconds total observation
 
 
-@register_probe("P4")
+@register_probe("wrist_flick")
 class WristFlickProbe(ProbeController):
 
     def execute(self, env) -> ProbeResult:
@@ -104,7 +104,7 @@ class WristFlickProbe(ProbeController):
         traj_array = np.array(trajectory) if trajectory else np.zeros((0, 6))
 
         return ProbeResult(
-            probe_type="P4",
+            probe_type="wrist_flick",
             observations=observations,
             trajectory=traj_array,
             cost=1,

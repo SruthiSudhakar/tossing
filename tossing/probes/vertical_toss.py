@@ -1,4 +1,4 @@
-"""P1: Vertical micro-toss probe.
+"""vertical_toss: Vertical micro-toss probe.
 
 Launch object straight up at 2 m/s.
 Returns: apex_height, hang_time, landing_offset.
@@ -16,7 +16,7 @@ from tossing.types import ProbeResult
 LAUNCH_SPEED = 2.0  # m/s upward
 
 
-@register_probe("P1")
+@register_probe("vertical_toss")
 class VerticalTossProbe(ProbeController):
 
     def execute(self, env) -> ProbeResult:
@@ -68,7 +68,7 @@ class VerticalTossProbe(ProbeController):
         traj_array = np.array(trajectory) if trajectory else np.zeros((0, 6))
 
         return ProbeResult(
-            probe_type="P1",
+            probe_type="vertical_toss",
             observations=observations,
             trajectory=traj_array,
             cost=1,

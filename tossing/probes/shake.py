@@ -1,4 +1,4 @@
-"""P5: Small shake probe.
+"""shake: Small shake probe.
 
 Oscillate gripper ±5cm at 4 Hz for 1 second while object remains grasped.
 Returns: peak_force, damping_ratio, perceived_resistance.
@@ -18,7 +18,7 @@ SHAKE_AMPLITUDE = 0.05  # meters
 SHAKE_DURATION = 1.0  # seconds
 
 
-@register_probe("P5")
+@register_probe("shake")
 class ShakeProbe(ProbeController):
 
     def execute(self, env) -> ProbeResult:
@@ -91,7 +91,7 @@ class ShakeProbe(ProbeController):
         traj_array = np.array(trajectory) if trajectory else np.zeros((0, 6))
 
         return ProbeResult(
-            probe_type="P5",
+            probe_type="shake",
             observations=observations,
             trajectory=traj_array,
             cost=1,
