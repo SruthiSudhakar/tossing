@@ -55,7 +55,7 @@ whatever text it has accumulated in its prompt context.
 
 | File | Purpose |
 |------|---------|
-| `tossing/vlm/client.py` | `VLMClient` ABC + `AnthropicClient` (Claude), `OpenAIClient` (GPT-4o), `FakeVLMClient` (tests). PIL → base64 encoding. Shared disk cache keyed on `(provider, model, prompt, image)` — repeat eval runs hit the cache and cost $0. |
+| `tossing/vlm/client.py` | `VLMClient` ABC + `AnthropicClient` (Claude), `OpenAIClient` (GPT), `FakeVLMClient` (tests). PIL → base64 encoding. Shared disk cache keyed on `(provider, model, prompt, image)` — repeat eval runs hit the cache and cost $0. |
 | `tossing/vlm/prompts.py` | System prompt describing the 5 probes + THROW contract. `build_user_message()` renders probe history as `key=value` text. |
 | `tossing/vlm/parser.py` | Regex parser for `ACTION: <probe_name>\|THROW` tail; for THROW, parses `THETA/V/DT`. Uses last-occurrence so the VLM may restate things mid-reasoning. Clamps mildly out-of-range floats; raises on wild values. |
 | `tossing/vlm/loop.py` | `run_episode(env, target_distance, max_probes, client) → EpisodeResult`. One retry on parse failure, then abort. Over-budget probe requests are ignored and the next turn forces THROW. |
@@ -487,7 +487,7 @@ Con: ≈20× more simulator calls per training row; must be built fresh (cannot 
 ### Phase 4: VLM Integration (Weeks 5–7)
 - [ ] Implement prompt template and memory retrieval (CLIP-based)
 - [ ] Build VLM decision loop (parse structured output, handle failures)
-- [ ] Test with GPT-4o / Claude as VLM backbone (compare both)
+- [ ] Test with GPT / Claude as VLM backbone (compare both)
 - [ ] Iterate on prompt based on failure analysis
 
 ### Phase 5: Baselines + Evaluation (Weeks 7–9)

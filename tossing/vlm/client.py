@@ -1,6 +1,6 @@
 """VLM client abstractions with a shared JSON cache.
 
-Two real backends (Claude via anthropic, GPT-4o via openai) plus a FakeVLMClient
+Two real backends (Claude via anthropic, GPT via openai) plus a FakeVLMClient
 that returns canned responses for tests. All clients share a common cache keyed
 on (provider, model, prompt_hash) so repeat eval runs are deterministic and cheap.
 """
@@ -127,11 +127,11 @@ class AnthropicClient(VLMClient):
 
 
 class OpenAIClient(VLMClient):
-    """GPT-4o via the openai SDK."""
+    """GPT via the openai SDK."""
 
     provider = "openai"
 
-    def __init__(self, model: str = "gpt-4o",
+    def __init__(self, model: str = "gpt-5.4-mini-2026-03-17",
                  cache_dir: str | Path | None = None,
                  max_tokens: int = 2048):
         super().__init__(cache_dir=cache_dir)
@@ -207,7 +207,7 @@ def build_client(provider: str,
         if model is not None:
             kwargs["model"] = model
         return AnthropicClient(**kwargs)
-    if provider in ("openai", "gpt-4o", "gpt4o"):
+    if provider in ("openai", "gpt-4o", "gpt4o", "gpt-5.4-mini-2026-03-17"):
         kwargs = {"cache_dir": cache_dir}
         if model is not None:
             kwargs["model"] = model

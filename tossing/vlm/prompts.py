@@ -20,8 +20,9 @@ PROBE MENU (each costs nothing and returns structured numerical observations):
        Params: launch_speed in [0.5, 5.0] m/s (default 2.0).
        Observations: apex_height (m), hang_time (s), landing_offset (m).
        Diagnostic: mass (hang time), drag (apex shortfall vs ballistic).
-  forward_toss = Launch at a chosen angle and speed.
-       Params: launch_speed in [0.5, 6.0] m/s (default 3.0),
+  forward_toss = Launch at a chosen angle and speed (capped low — the probe
+       cannot reach the basket, so it's purely diagnostic).
+       Params: launch_speed in [0.5, 1.5] m/s (default 1.0),
                launch_angle in [10, 80] deg (default 45.0).
        Observations: landing_distance (m), flight_time (s), lateral_drift (m).
        Diagnostic: drag (range shortfall), CoM offset (lateral drift).

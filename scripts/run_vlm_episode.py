@@ -48,7 +48,7 @@ def main():
                    choices=["claude", "openai"],
                    help="VLM provider.")
     p.add_argument("--model", type=str, default=None,
-                   help="Override default model (e.g., claude-opus-4-5, gpt-4o).")
+                   help="Override default model (e.g., claude-opus-4-5, gpt-5.4-mini-2026-03-17).")
     p.add_argument("--output-root", type=str, default="outputs/vlm_only",
                    help="Parent directory for per-run output dirs.")
     p.add_argument("--output", type=str, default=None,

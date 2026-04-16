@@ -1,8 +1,13 @@
 """forward_toss: Short forward toss probe.
 
-Launch at `launch_angle` degrees at `launch_speed` m/s (defaults: 45, 3).
+Launch at `launch_angle` degrees at `launch_speed` m/s (defaults: 45, 1).
 Returns: landing_distance, flight_time, lateral_drift.
 Diagnostic purpose: drag (range shortfall), CoM offset (lateral drift).
+
+The launch_speed cap is intentionally low so the probe cannot reach the
+basket (max ballistic range ~0.86 m at h=1.5 m release height even with
+the optimal angle), preventing the VLM from using the probe as a free
+calibration throw.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from tossing.types import ProbeResult
 class ForwardTossProbe(ProbeController):
 
     PARAM_SPEC = {
-        "launch_speed": (3.0, 0.5, 6.0),
+        "launch_speed": (1.0, 0.5, 1.5),
         "launch_angle": (45.0, 10.0, 80.0),
     }
 
