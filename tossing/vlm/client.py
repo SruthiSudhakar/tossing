@@ -143,7 +143,7 @@ class OpenAIClient(VLMClient):
     def _call_api(self, image_b64: str, system: str, user: str) -> str:
         resp = self._client.chat.completions.create(
             model=self.model,
-            max_tokens=self.max_tokens,
+            max_completion_tokens=self.max_tokens,
             messages=[
                 {"role": "system", "content": system},
                 {

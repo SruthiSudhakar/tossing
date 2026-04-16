@@ -5,3 +5,4 @@ __pycache__/
 *.pyo
 .pytest_cache/
 set_env_vars.sh
+x_runscripts/

@@ -21,6 +21,7 @@ import argparse
 import json
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -92,6 +93,92 @@ def _summarize(rows: list[dict]) -> dict:
     return summary
 
 
+def _run_one_episode(task: dict) -> dict:
+    """Worker: run a single VLM episode in its own process.
+
+    Builds a fresh client + env so nothing is shared across workers.
+    """
+    obj = task["obj"]
+    distance = task["distance"]
+    budget = task["budget"]
+    vlm_seed = task["vlm_seed"]
+    episode_idx = task["episode_idx"]
+    episode_dir = Path(task["episode_dir"])
+    record_videos = task["record_videos"]
+    provider = task["provider"]
+    model = task["model"]
+
+    episode_dir.mkdir(parents=True, exist_ok=True)
+    (episode_dir / "meta.json").write_text(json.dumps({
+        "episode_idx": episode_idx,
+        "object": obj.name,
+        "family": obj.family,
+        "budget": budget,
+        "vlm_seed": vlm_seed,
+        "distance": distance,
+    }, indent=2))
+
+    ep_cache_dir = episode_dir / "cache"
+    ep_cache_dir.mkdir(parents=True, exist_ok=True)
+    client = build_client(provider, cache_dir=ep_cache_dir, model=model)
+
+    env = TossEnv(obj, basket_distance=distance)
+    video_dir = (episode_dir / "videos") if record_videos else None
+    result = run_episode(
+        env=env,
+        target_distance=distance,
+        max_probes=budget,
+        client=client,
+        video_dir=video_dir,
+    )
+    row = _serialize_episode(obj, distance, budget, vlm_seed, result)
+    row["episode_idx"] = episode_idx
+    row["episode_dir"] = str(episode_dir)
+    (episode_dir / "episode.json").write_text(json.dumps(row, indent=2))
+    return row
+
+
+def _run_one_oracle(task: dict) -> dict:
+    """Worker: run CEM oracle for one (object, distance) in its own process."""
+    obj = task["obj"]
+    distance = task["distance"]
+    n_samples = task["n_samples"]
+    n_iterations = task["n_iterations"]
+    record_videos = task["record_videos"]
+    out_dir = Path(task["out_dir"])
+
+    params, dist = cem_optimal_throw(
+        obj, distance,
+        n_samples=n_samples,
+        n_iterations=n_iterations,
+        seed=0,
+    )
+    env = TossEnv(obj, basket_distance=distance)
+    oracle_video_path = None
+    tr = None
+    if params is not None:
+        if record_videos:
+            env.start_recording(fps=30)
+        tr = env.throw(params)
+        if record_videos:
+            video_dir = out_dir / "videos" / f"{obj.name}_d{distance:.2f}_oracle"
+            video_dir.mkdir(parents=True, exist_ok=True)
+            candidate = video_dir / "oracle_throw.mp4"
+            if env.save_recording(candidate, fps=30) > 0:
+                oracle_video_path = str(candidate)
+    return {
+        "object": obj.name,
+        "family": obj.family,
+        "distance": distance,
+        "throw": ({"theta": params.theta, "v": params.v, "dt": params.dt}
+                  if params else None),
+        "distance_to_basket": float(tr.distance_to_basket) if tr else None,
+        "success": bool(tr.success) if tr else False,
+        "cem_best_distance": float(dist),
+        "video": oracle_video_path,
+    }
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--catalog", type=str, default="catalog.json")
@@ -121,6 +208,9 @@ def main():
     p.add_argument("--record-videos", action="store_true",
                    help="Record per-probe and per-throw MP4s for every episode. "
                         "Off by default since it can produce a lot of files.")
+    p.add_argument("--n-workers", type=int, default=10,
+                   help="Number of episodes to run in parallel via "
+                        "ProcessPoolExecutor. Set to 1 for sequential execution.")
     args = p.parse_args()
 
     budgets = [int(b.strip()) for b in args.budgets.split(",") if b.strip()]
@@ -138,9 +228,8 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[info] Output dir: {out_dir}")
 
-    # cache_dir is set per-episode below, so each episode's prompt/response
-    # cache lives in its own directory.
-    client = build_client(args.provider, cache_dir=None, model=args.model)
+    # Clients are built per-worker inside _run_one_episode so nothing is
+    # shared across processes.
 
     # Save run config.
     (out_dir / "config.json").write_text(json.dumps({
@@ -153,52 +242,48 @@ def main():
         "model": args.model,
         "include_oracle": args.include_oracle,
         "record_videos": args.record_videos,
+        "n_workers": args.n_workers,
     }, indent=2))
 
-    rows: list[dict] = []
-    total = len(catalog) * len(distances) * len(budgets) * args.vlm_seeds
-    pbar = tqdm(total=total, desc="Episodes")
-    t0 = time.time()
-
+    tasks: list[dict] = []
     episode_idx = 0
     for obj in catalog:
         for distance in distances:
             for budget in budgets:
                 for vlm_seed in range(args.vlm_seeds):
-                    episode_dir = out_dir / f"episode_{episode_idx}"
-                    episode_dir.mkdir(parents=True, exist_ok=True)
-                    (episode_dir / "meta.json").write_text(json.dumps({
-                        "episode_idx": episode_idx,
-                        "object": obj.name,
-                        "family": obj.family,
+                    tasks.append({
+                        "obj": obj,
+                        "distance": distance,
                         "budget": budget,
                         "vlm_seed": vlm_seed,
-                        "distance": distance,
-                    }, indent=2))
-
-                    # Point the client at this episode's cache dir.
-                    ep_cache_dir = episode_dir / "cache"
-                    ep_cache_dir.mkdir(parents=True, exist_ok=True)
-                    client.cache_dir = ep_cache_dir
-
-                    env = TossEnv(obj, basket_distance=distance)
-                    video_dir = (episode_dir / "videos") if args.record_videos else None
-                    result = run_episode(
-                        env=env,
-                        target_distance=distance,
-                        max_probes=budget,
-                        client=client,
-                        video_dir=video_dir,
-                    )
-                    row = _serialize_episode(obj, distance, budget, vlm_seed, result)
-                    row["episode_idx"] = episode_idx
-                    row["episode_dir"] = str(episode_dir)
-                    rows.append(row)
-                    (episode_dir / "episode.json").write_text(json.dumps(row, indent=2))
-                    pbar.update(1)
-                    # Incremental save — cheap and protects against crashes.
-                    (out_dir / "results.json").write_text(json.dumps(rows, indent=2))
+                        "episode_idx": episode_idx,
+                        "episode_dir": str(out_dir / f"episode_{episode_idx}"),
+                        "record_videos": args.record_videos,
+                        "provider": args.provider,
+                        "model": args.model,
+                    })
                     episode_idx += 1
+
+    rows: list[dict] = []
+    pbar = tqdm(total=len(tasks), desc="Episodes")
+    t0 = time.time()
+
+    n_workers = max(1, args.n_workers)
+    if n_workers == 1:
+        for t in tasks:
+            row = _run_one_episode(t)
+            rows.append(row)
+            pbar.update(1)
+            (out_dir / "results.json").write_text(json.dumps(rows, indent=2))
+    else:
+        with ProcessPoolExecutor(max_workers=n_workers) as ex:
+            futures = [ex.submit(_run_one_episode, t) for t in tasks]
+            for fut in as_completed(futures):
+                row = fut.result()
+                rows.append(row)
+                pbar.update(1)
+                # Incremental save — cheap and protects against crashes.
+                (out_dir / "results.json").write_text(json.dumps(rows, indent=2))
     pbar.close()
 
     summary = _summarize(rows)
@@ -214,43 +299,30 @@ def main():
     # Optional oracle ceiling.
     if args.include_oracle:
         print("\n[info] Running CEM oracle per (object, distance) (ceiling baseline)...")
-        oracle_rows = []
-        oracle_total = len(catalog) * len(distances)
-        opbar = tqdm(total=oracle_total, desc="Oracle CEM")
-        for obj in catalog:
-            for distance in distances:
-                params, dist = cem_optimal_throw(
-                    obj, distance,
-                    n_samples=args.oracle_cem_samples,
-                    n_iterations=args.oracle_cem_iters,
-                    seed=0,
-                )
-                # Verify with a clean env throw.
-                env = TossEnv(obj, basket_distance=distance)
-                oracle_video_path = None
-                tr = None
-                if params is not None:
-                    if args.record_videos:
-                        env.start_recording(fps=30)
-                    tr = env.throw(params)
-                    if args.record_videos:
-                        video_dir = out_dir / "videos" / f"{obj.name}_d{distance:.2f}_oracle"
-                        video_dir.mkdir(parents=True, exist_ok=True)
-                        candidate = video_dir / "oracle_throw.mp4"
-                        if env.save_recording(candidate, fps=30) > 0:
-                            oracle_video_path = str(candidate)
-                oracle_rows.append({
-                    "object": obj.name,
-                    "family": obj.family,
-                    "distance": distance,
-                    "throw": ({"theta": params.theta, "v": params.v, "dt": params.dt}
-                              if params else None),
-                    "distance_to_basket": float(tr.distance_to_basket) if tr else None,
-                    "success": bool(tr.success) if tr else False,
-                    "cem_best_distance": float(dist),
-                    "video": oracle_video_path,
-                })
+        oracle_tasks = [
+            {
+                "obj": obj,
+                "distance": distance,
+                "n_samples": args.oracle_cem_samples,
+                "n_iterations": args.oracle_cem_iters,
+                "record_videos": args.record_videos,
+                "out_dir": str(out_dir),
+            }
+            for obj in catalog
+            for distance in distances
+        ]
+        oracle_rows: list[dict] = []
+        opbar = tqdm(total=len(oracle_tasks), desc="Oracle CEM")
+        if n_workers == 1:
+            for t in oracle_tasks:
+                oracle_rows.append(_run_one_oracle(t))
                 opbar.update(1)
+        else:
+            with ProcessPoolExecutor(max_workers=n_workers) as ex:
+                futures = [ex.submit(_run_one_oracle, t) for t in oracle_tasks]
+                for fut in as_completed(futures):
+                    oracle_rows.append(fut.result())
+                    opbar.update(1)
         opbar.close()
         (out_dir / "oracle.json").write_text(json.dumps(oracle_rows, indent=2))
         n_success = sum(1 for r in oracle_rows if r["success"])
